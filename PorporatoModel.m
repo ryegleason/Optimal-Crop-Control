@@ -10,12 +10,12 @@ E_max = 1.0; % maximum evap [mm/day] % ET max in Porporato is 4.5 = sum Emax and
 T_max = 3.5; % maximum transp [mm/day]
 K_s = 1100; % saturated hydrualic conductivity [mm/day]
 b = 4.05; % pore size distribution index
-beta = 2*b + 4; 
+beta = 2*b + 4;
 add_lit = 1.5; % carbon added to litter pool daily [gC/m^2/day] % Porporato had 1.5
 k_d = 0.0085; % biomass death rate [1/day] % Porporato had 0.0085
 k_l = 0.000065; % constant for rate of decomposition in litter [m^3/day/gC]
 k_h = 0.0000025; % constant for rate of decomposition in humus [m^3/day/gN] % Porporato had 0.0000025
-k_amm = 1; % constants for partitioning immobilized N [m^3/day/gC] 
+k_amm = 1; % constants for partitioning immobilized N [m^3/day/gC]
 k_nit = 1; % constants for partitioning immobilized N [m^3/day/gC]
 k_n = 0.6; % rate of nitrification [m^3/day/gC] % Porporato had 0.6
 a_amm = 0.05; % scale factor for ammonium leaching
@@ -46,11 +46,11 @@ n_amm(1) = 0.2; % 0.002 for Porporato, but maybe ~4 for IML?
 n_nit = zeros(1, T_total); % nitrogen in litter pool
 n_nit(1) = 1.00; % 0.3 for Porporato, but maybe 20-25 for IML?
 
-decomp = zeros(1, T_total); % 
-mineralize = zeros(1, T_total); % 
-psi_time = zeros(1, T_total); % 
-phi_time = zeros(1, T_total); % 
-rh_time = zeros(1, T_total); % 
+decomp = zeros(1, T_total); %
+mineralize = zeros(1, T_total); %
+psi_time = zeros(1, T_total); %
+phi_time = zeros(1, T_total); %
+rh_time = zeros(1, T_total); %
 
 %% Rainfall
 lambda = 0.23; % rate of days with rain % 0.23 for Porporato
@@ -94,7 +94,7 @@ for t=2:T_total
     else
         fact_d = s_fc/s(t-1);
         fact_n = (1-s(t-1))/(1-s_fc);
-    end 
+    end
     % Update CN ratio for litter and r_h parameter
     CN_lit = c_lit(t-1)/n_lit(t-1);
     r_bound = CN_hum/CN_lit;
@@ -105,7 +105,7 @@ for t=2:T_total
     imm_max = (k_amm*n_amm(t-1) + k_nit*n_nit(t-1))*fact_d; % Porporato also has *c_bio(t-1), but that breaks mass balance
     phi_bracket = k_h*c_hum(t-1)*(1/CN_hum - (1-r_r)/CN_bio) + k_l*c_lit(t-1) * ...
         (1/CN_lit - r_h/CN_hum - (1-r_h-r_r)/CN_bio);
-    if phi_bracket >= 0 
+    if phi_bracket >= 0
         fact_psi = 1;
         miner = fact_psi * fact_d * c_bio(t-1) * phi_bracket;
         imm = 0;
@@ -129,7 +129,7 @@ for t=2:T_total
     bd = k_d * c_bio(t-1); % biomass death
     dec_lit = (fact_psi*fact_d*k_l*c_bio(t-1))*c_lit(t-1); % decomposition in litter
     % Carbon decomposition, humus  (also covers redundant N decomp, C:N is constant in humus)
-    dec_hum = (fact_psi*fact_d*k_h*c_bio(t-1))*c_hum(t-1); 
+    dec_hum = (fact_psi*fact_d*k_h*c_bio(t-1))*c_hum(t-1);
     % Carbon and nitrogen decomp, biomass (all necessary rates/factors calculated above)
     % Nitrification
     nit = fact_n * k_n * c_bio(t-1) * n_amm(t-1);
@@ -169,9 +169,9 @@ for t=2:T_total
     c_lit(t) = c_lit(t-1) + add_lit + bd - dec_lit;
     n_lit(t) = n_lit(t-1) + add_lit/CN_add + bd/CN_bio - dec_lit/CN_lit;
     c_hum(t) = c_hum(t-1) + r_h*dec_lit - dec_hum;
-    c_bio(t) = c_bio(t-1) + (1-r_h-r_r)*dec_lit + (1-r_r)*dec_hum - bd ; 
+    c_bio(t) = c_bio(t-1) + (1-r_h-r_r)*dec_lit + (1-r_r)*dec_hum - bd ;
 %     n_bio(t) = n_bio(t-1) + (1-r_h*(CN_lit/CN_hum))*(dec_lit/CN_lit) + ...
-%         dec_hum/CN_hum - bd/CN_bio - phi; 
+%         dec_hum/CN_hum - bd/CN_bio - phi;
     n_amm(t) = n_amm(t-1) + miner - imm_amm - nit - leach_amm - up_amm;
     n_nit(t) = n_nit(t-1) + nit - imm_nit - leach_nit - up_nit;
     if n_amm(t)<0
@@ -197,12 +197,12 @@ end
 % figure
 % plot(s)
 % hold on
-% ylabel('Relative soil moisture [-]', 'fontsize', 26) 
+% ylabel('Relative soil moisture [-]', 'fontsize', 26)
 % yyaxis right
 % bar(Precip)
 % hold off
 % xlabel('Day of simulation', 'fontsize', 26)
-% ylabel('Precipitation [mm]', 'fontsize', 26) 
+% ylabel('Precipitation [mm]', 'fontsize', 26)
 % figure
 % plot(c_lit)
 % figure
@@ -212,16 +212,16 @@ end
 % figure
 % plot(n_amm)
 % figure
-hold on
-plot(n_nit)
+% hold on
+% plot(n_nit)
 % xlabel('Day of simulation', 'fontsize', 26)
-% ylabel('Nitrate-N concentration [gN/m^3]', 'fontsize', 26) 
+% ylabel('Nitrate-N concentration [gN/m^3]', 'fontsize', 26)
 % figure
 % plot(n_lit)
 % figure
 % plot(decomp)
-% figure
-% plot(mineralize)
+figure
+plot(mineralize)
 % CN_lit = c_lit ./ n_lit;
 % figure
 % plot(CN_lit)
