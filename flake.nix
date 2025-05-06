@@ -17,6 +17,7 @@
         pkgs.python312Packages.jupyter
         pkgs.python312Packages.numpy
         pkgs.python312Packages.matplotlib
+        pkgs.python312Packages.pandas
       ];
     };
   };
