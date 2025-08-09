@@ -194,7 +194,7 @@ def calculate_probabilites_of_violation(transition_counts: npt.NDArray[np.uint8]
         this_step_probability_of_violation = np.sum(transition_counts[i], (5, 6, 7, 8), np.float64)[:, :, :, :,
                                              1] / kernel_metadata.num_trials_per_initial_condition
         next_step_weather_averaged_probability_of_violation = (
-                probabilities_of_violation[i + 1, :,0] * probability_of_clear_forecast +
+                probabilities_of_violation[i + 1, :, 0] * probability_of_clear_forecast +
                 probabilities_of_violation[i + 1, :, 1] * (1 - probability_of_clear_forecast))
         for initial_accumulated_N_index in range(
                 min((kernel_metadata.single_step_accumulated_N_num_steps * i + 1), kernel_metadata.accumulated_N_num_steps)):
@@ -221,18 +221,18 @@ def calculate_probabilites_of_violation(transition_counts: npt.NDArray[np.uint8]
                                 windowed_transition_counts = transition_counts[
                                     i, initial_forecast_index, initial_moisture_index, post_add_ammonium, post_add_nitrate, 0]
                             total_transition_counts = np.sum(windowed_transition_counts)
+                            this_step_probability_of_violation = (kernel_metadata.num_trials_per_initial_condition - total_transition_counts) / kernel_metadata.num_trials_per_initial_condition
+                            assert this_step_probability_of_violation >= 0
+                            assert this_step_probability_of_violation <= 1
                             if total_transition_counts > 0:
                                 probabilities_of_violation[
                                     i, initial_accumulated_N_index, initial_forecast_index, initial_moisture_index, initial_ammonium_index, initial_nitrate_index] = \
-                                this_step_probability_of_violation[
-                                    initial_forecast_index, initial_moisture_index, post_add_ammonium, post_add_nitrate] + np.sum(
+                                this_step_probability_of_violation + np.sum(
                                     windowed_transition_counts * next_step_weather_averaged_probability_of_violation[
                                                                  initial_accumulated_N_index:min(
                                                                      accumulated_N_window_end,
-                                                                     kernel_metadata.accumulated_N_num_steps)]) / total_transition_counts
+                                                                     kernel_metadata.accumulated_N_num_steps)]) / kernel_metadata.num_trials_per_initial_condition
+
                             else:
-                                probabilities_of_violation[
-                                    i, initial_accumulated_N_index, initial_forecast_index, initial_moisture_index, initial_ammonium_index, initial_nitrate_index] = \
-                                this_step_probability_of_violation[
-                                    initial_forecast_index, initial_moisture_index, post_add_ammonium, post_add_nitrate]
+                                probabilities_of_violation[i, initial_accumulated_N_index, initial_forecast_index, initial_moisture_index, initial_ammonium_index, initial_nitrate_index] = 1.0
     return probabilities_of_violation
