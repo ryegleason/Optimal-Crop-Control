@@ -5,8 +5,8 @@ from multiprocessing import Pool
 import pickle
 from tqdm import tqdm
 
-from forward_models import RAIN_EXISTENCE_RATE, SOIL_VOID_SPACE_MM, SOIL_DEPTH_MM, generate_rain, hydrology_model, soil_organic_model, inorganic_nitrogen_model
-from dp_solver import solve_dp, calculate_probabilites_of_violation, KernelMetadata
+from forward_models import RAIN_EXISTENCE_RATE, SOIL_DEPTH_MM, generate_rain, hydrology_model, soil_organic_model, inorganic_nitrogen_model
+from dp_solver import solve_dp, calculate_probabilities_of_violation, KernelMetadata
 
 rng = np.random.default_rng(12345)
 
@@ -16,7 +16,7 @@ NUM_CONTROL_STEPS = 4
 CORN_PRICE_USD_PER_G_GRAIN = 4.80 / (1 - 0.155) / 25401.2
 N_PRICE_USD_PER_G = 0.0011
 N_SUFFICIENT_YIELD_G_GRAIN_PER_M2 = 1200
-NNI_TO_RELATIVE_YIELD_CORRELATION = 1.17
+NNI_TO_RELATIVE_YIELD_CORRELATION = 0.99
 MAX_BIOMASS_G_DRY_MASS_PER_M2 = 3000
 
 INORGANIC_N_MODEL_DT_DAYS = 1.0 / 24.0 * 2.0 / 6.0
@@ -217,7 +217,7 @@ pareto_sweep_probability_of_violation = np.ndarray([PARETO_SWEEP_SAMPLES, 2, MOI
 for i in tqdm(range(PARETO_SWEEP_SAMPLES)):
     sweep_optimal_cost_to_go_USD_per_m2, sweep_optimal_ammonium_add_in_cells, sweep_optimal_nitrate_add_in_cells = solve_dp(transition_counts, expected_plant_N_deficit_cost_USD, kernel_metadata, N_PRICE_USD_PER_G, (SOIL_DEPTH_MM / 1000.), n_indices_to_values, leaching_penalties_USD_per_m2[i], PROBABILITY_OF_CLEAR_FORECAST)
     pareto_sweep_expected_profit[i] = N_SUFFICIENT_YIELD_G_GRAIN_PER_M2 * CORN_PRICE_USD_PER_G_GRAIN - sweep_optimal_cost_to_go_USD_per_m2[0, 0, 0]
-    pareto_sweep_probability_of_violation[i] = calculate_probabilites_of_violation(transition_counts, sweep_optimal_ammonium_add_in_cells, sweep_optimal_nitrate_add_in_cells, kernel_metadata, PROBABILITY_OF_CLEAR_FORECAST)[0,0]
+    pareto_sweep_probability_of_violation[i] = calculate_probabilities_of_violation(transition_counts, sweep_optimal_ammonium_add_in_cells, sweep_optimal_nitrate_add_in_cells, kernel_metadata, PROBABILITY_OF_CLEAR_FORECAST)[0,0]
 
 
 with open(str(CONTROL_TIMESTEP_DAYS) + '_pareto_sweep_expected_profit.pickle', 'wb') as f:

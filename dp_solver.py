@@ -94,64 +94,41 @@ def solve_dp_recursive_cases(transition_counts: npt.NDArray[np.uint8],
         # leaching violated, accumulated N, forecast, starting moisture, starting ammonium, starting nitrate
         expected_cost_to_go_from_cell = np.ndarray(
             [2, kernel_metadata.accumulated_N_num_steps, 2, kernel_metadata.moisture_num_steps, kernel_metadata.ammonium_num_steps, kernel_metadata.nitrate_num_steps], np.float64)
+        # has leaching been violated, accumulated N, moisture, ammonium, nitrate
         next_step_weather_averaged_optimal_cost_to_go_USD_per_m2 = (
-                optimal_cost_to_go_USD_per_m2[i + 1, :, :,0] * probability_of_clear_forecast +
+                optimal_cost_to_go_USD_per_m2[i + 1, :, :, 0] * probability_of_clear_forecast +
                 optimal_cost_to_go_USD_per_m2[i + 1, :, :, 1] * (1 - probability_of_clear_forecast))
-        for forecast_index in range(2):
-            for moisture_index in range(kernel_metadata.moisture_num_steps):
-                for ammonium_index in range(kernel_metadata.ammonium_num_steps):
-                    for nitrate_index in range(kernel_metadata.nitrate_num_steps):
-                        # this array is of outcome counts, dimensions are [change in accumulated N, moisture, ammonium, nitrate]
-                        non_violating_transition_counts_from_zero_N = transition_counts[
-                            i, forecast_index, moisture_index, ammonium_index, nitrate_index, 0]
-                        violating_transition_counts_from_zero_N = transition_counts[
-                            i, forecast_index, moisture_index, ammonium_index, nitrate_index, 1]
-
-                        for accumulated_N_index in range(
-                                min((kernel_metadata.single_step_accumulated_N_num_steps * i + 1), kernel_metadata.accumulated_N_num_steps)):
-                            accumulated_N_window_end = accumulated_N_index + kernel_metadata.single_step_accumulated_N_num_steps
-                            cost_for_invalid_transitions_without_penalty = 0
-                            cost_for_invalid_transitions_with_penalty = 0
-
+        for accumulated_N_index in range(min((kernel_metadata.single_step_accumulated_N_num_steps * i + 1), kernel_metadata.accumulated_N_num_steps)):
+        # for accumulated_N_index in range(kernel_metadata.accumulated_N_num_steps):
+            accumulated_N_window_end = accumulated_N_index + kernel_metadata.single_step_accumulated_N_num_steps
+            for forecast_index in range(2):
+                for moisture_index in range(kernel_metadata.moisture_num_steps):
+                    for ammonium_index in range(kernel_metadata.ammonium_num_steps):
+                        for nitrate_index in range(kernel_metadata.nitrate_num_steps):
                             if accumulated_N_window_end > kernel_metadata.accumulated_N_num_steps:
-                                # sum up the transition counts that would go "out of range" and find the cost using the top of the range
-                                violating_invalid_transition_counts = violating_transition_counts_from_zero_N[-(
-                                            accumulated_N_window_end - kernel_metadata.accumulated_N_num_steps):]
-                                violating_valid_transition_counts = violating_transition_counts_from_zero_N[:-(
-                                            accumulated_N_window_end - kernel_metadata.accumulated_N_num_steps)]
-                                cost_for_first_violating_invalid_transitions = np.sum(
-                                    np.sum(violating_invalid_transition_counts, axis=0) * (
-                                    next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[1, -1]))
-                                non_violating_invalid_transition_counts = non_violating_transition_counts_from_zero_N[-(
-                                            accumulated_N_window_end - kernel_metadata.accumulated_N_num_steps):]
-                                non_violating_valid_transition_counts = non_violating_transition_counts_from_zero_N[:-(
-                                            accumulated_N_window_end - kernel_metadata.accumulated_N_num_steps)]
-                                cost_for_non_violating_invalid_transitions_from_unviolated = np.sum(
-                                    np.sum(non_violating_invalid_transition_counts, axis=0) * (
-                                    next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[0, -1]))
-                                cost_for_invalid_transitions_with_penalty = cost_for_first_violating_invalid_transitions + cost_for_non_violating_invalid_transitions_from_unviolated
-                                cost_for_invalid_transitions_without_penalty = np.sum(np.sum(
-                                    violating_invalid_transition_counts + non_violating_invalid_transition_counts,
-                                    axis=0) * (next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[1, -1]))
-                                accumulated_N_window_end = kernel_metadata.accumulated_N_num_steps
+                                # this array is of outcome counts, dimensions are [change in accumulated N, moisture, ammonium, nitrate]
+                                windowed_violating_transition_counts = transition_counts[i, forecast_index, moisture_index, ammonium_index, nitrate_index, 1,
+                                                                       :(kernel_metadata.accumulated_N_num_steps - accumulated_N_index)].copy()
+                                windowed_non_violating_transition_counts = transition_counts[i, forecast_index, moisture_index, ammonium_index, nitrate_index, 0,
+                                                                           :(kernel_metadata.accumulated_N_num_steps - accumulated_N_index)].copy()
+
+                                windowed_violating_transition_counts[-1] += np.sum(transition_counts[i, forecast_index, moisture_index, ammonium_index, nitrate_index, 1,
+                                                                                   (kernel_metadata.accumulated_N_num_steps - accumulated_N_index):], axis=0)
+                                windowed_non_violating_transition_counts[-1] += np.sum(
+                                    transition_counts[i, forecast_index, moisture_index, ammonium_index, nitrate_index,
+                                    0,
+                                    (kernel_metadata.accumulated_N_num_steps - accumulated_N_index):], axis=0)
                             else:
-                                violating_valid_transition_counts = violating_transition_counts_from_zero_N
-                                non_violating_valid_transition_counts = non_violating_transition_counts_from_zero_N
-                            violated_cropped_optimal_cost_to_go = next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[
-                                                                  1, accumulated_N_index:accumulated_N_window_end]
-                            unviolated_cropped_optimal_cost_to_go = next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[
-                                                                    0, accumulated_N_index:accumulated_N_window_end]
-                            expected_cost_to_go_from_cell[
-                                0, accumulated_N_index, forecast_index, moisture_index, ammonium_index, nitrate_index] = (
-                                                                                                                                     cost_for_invalid_transitions_with_penalty + np.sum(
-                                                                                                                                 unviolated_cropped_optimal_cost_to_go * non_violating_valid_transition_counts) + np.sum(
-                                                                                                                                 (
-                                                                                                                                     violated_cropped_optimal_cost_to_go) * violating_valid_transition_counts)) / kernel_metadata.num_trials_per_initial_condition
-                            expected_cost_to_go_from_cell[
-                                1, accumulated_N_index, forecast_index, moisture_index, ammonium_index, nitrate_index] = (
-                                                                                                                                     cost_for_invalid_transitions_without_penalty + np.sum(
-                                                                                                                                 violated_cropped_optimal_cost_to_go * (
-                                                                                                                                             non_violating_valid_transition_counts + violating_valid_transition_counts))) / kernel_metadata.num_trials_per_initial_condition
+                                windowed_violating_transition_counts = transition_counts[i, forecast_index,
+                                                                       moisture_index, ammonium_index, nitrate_index, 1]
+                                windowed_non_violating_transition_counts = transition_counts[i, forecast_index,
+                                                                           moisture_index, ammonium_index,
+                                                                           nitrate_index, 0]
+
+                            accumulated_N_window_upper_index_capped = min(accumulated_N_window_end, kernel_metadata.accumulated_N_num_steps)
+                            expected_cost_to_go_from_cell[0, accumulated_N_index, forecast_index, moisture_index, ammonium_index, nitrate_index] = np.sum(windowed_non_violating_transition_counts * next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[0, accumulated_N_index:accumulated_N_window_upper_index_capped] + windowed_violating_transition_counts * next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[1, accumulated_N_index:accumulated_N_window_upper_index_capped]) / kernel_metadata.num_trials_per_initial_condition
+                            expected_cost_to_go_from_cell[1, accumulated_N_index, forecast_index, moisture_index, ammonium_index, nitrate_index] = np.sum((windowed_violating_transition_counts + windowed_non_violating_transition_counts) * next_step_weather_averaged_optimal_cost_to_go_USD_per_m2[1, accumulated_N_index:accumulated_N_window_upper_index_capped]) / kernel_metadata.num_trials_per_initial_condition
+
         expected_cost_to_go_from_cell[0] += expected_plant_N_deficit_cost_USD[i]
         expected_cost_to_go_from_cell[1] += expected_plant_N_deficit_cost_USD[i]
 
@@ -167,11 +144,11 @@ def solve_dp(transition_counts: npt.NDArray[np.uint8], expected_plant_N_deficit_
     solve_dp_recursive_cases(transition_counts, expected_plant_N_deficit_cost_USD,  kernel_metadata, N_price_USD_per_g, soil_depth_m, nitrogen_indices_to_values, probability_of_clear_forecast, optimal_cost_to_go_USD_per_m2, optimal_ammonium_add_in_cells, optimal_nitrate_add_in_cells)
     return optimal_cost_to_go_USD_per_m2, optimal_ammonium_add_in_cells, optimal_nitrate_add_in_cells
 
-def calculate_probabilites_of_violation(transition_counts: npt.NDArray[np.uint8],
-                                        optimal_ammonium_add_in_cells: npt.NDArray[np.uint8],
-                                        optimal_nitrate_add_in_cells: npt.NDArray[np.uint8],
-                                        kernel_metadata: KernelMetadata,
-                                        probability_of_clear_forecast: float) -> npt.NDArray[np.float64]:
+def calculate_probabilities_of_violation(transition_counts: npt.NDArray[np.uint8],
+                                         optimal_ammonium_add_in_cells: npt.NDArray[np.uint8],
+                                         optimal_nitrate_add_in_cells: npt.NDArray[np.uint8],
+                                         kernel_metadata: KernelMetadata,
+                                         probability_of_clear_forecast: float) -> npt.NDArray[np.float64]:
     terminal_step_probability_of_violation = calculate_terminal_step_probability_of_violation(transition_counts, kernel_metadata)
     probabilities_of_violation = np.ndarray(
         [kernel_metadata.num_control_steps, kernel_metadata.accumulated_N_num_steps, 2, kernel_metadata.moisture_num_steps, kernel_metadata.ammonium_num_steps, kernel_metadata.nitrate_num_steps],
@@ -190,14 +167,11 @@ def calculate_probabilites_of_violation(transition_counts: npt.NDArray[np.uint8]
                         terminal_step_probability_of_violation[
                             initial_forecast_index, initial_moisture_index, post_add_ammonium, post_add_nitrate]
     for i in reversed(range(kernel_metadata.num_control_steps - 1)):
-        # forecast, moisture, ammonium, nitrate
-        this_step_probability_of_violation = np.sum(transition_counts[i], (5, 6, 7, 8), np.float64)[:, :, :, :,
-                                             1] / kernel_metadata.num_trials_per_initial_condition
         next_step_weather_averaged_probability_of_violation = (
                 probabilities_of_violation[i + 1, :, 0] * probability_of_clear_forecast +
                 probabilities_of_violation[i + 1, :, 1] * (1 - probability_of_clear_forecast))
-        for initial_accumulated_N_index in range(
-                min((kernel_metadata.single_step_accumulated_N_num_steps * i + 1), kernel_metadata.accumulated_N_num_steps)):
+        for initial_accumulated_N_index in range(min((kernel_metadata.single_step_accumulated_N_num_steps * i + 1), kernel_metadata.accumulated_N_num_steps)):
+        # for initial_accumulated_N_index in range(kernel_metadata.accumulated_N_num_steps):
             for initial_forecast_index in range(2):
                 for initial_moisture_index in range(kernel_metadata.moisture_num_steps):
                     for initial_ammonium_index in range(kernel_metadata.ammonium_num_steps):
