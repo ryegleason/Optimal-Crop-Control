@@ -10,8 +10,8 @@ from dp_solver import solve_dp, calculate_probabilities_of_violation, KernelMeta
 
 rng = np.random.default_rng(12345)
 
-CONTROL_TIMESTEP_DAYS = 9
-NUM_CONTROL_STEPS = 4
+CONTROL_TIMESTEP_DAYS = 36
+NUM_CONTROL_STEPS = 1
 # corn prices are measured in USD / 56 lbs at 15.5% moisture (by mass)
 CORN_PRICE_USD_PER_G_GRAIN = 4.80 / (1 - 0.155) / 25401.2
 N_PRICE_USD_PER_G = 0.0011
@@ -183,6 +183,7 @@ class InitialConditionIterator:
                         self.initial_day_idx += 1
         return out
 
+# time, forecast, moisture, starting ammonium, starting nitrate, -> does leaching limit get violated, n accumulation, end moisture, end ammonium, end nitrate
 transition_counts = np.zeros([NUM_CONTROL_STEPS, 2, MOISTURE_NUM_STEPS, AMMONIUM_NUM_STEPS, NITRATE_NUM_STEPS, 2, SINGLE_STEP_ACCUMULATED_N_NUM_STEPS, MOISTURE_NUM_STEPS, AMMONIUM_NUM_STEPS, NITRATE_NUM_STEPS], np.uint8)
 expected_plant_N_deficit_cost_USD = np.zeros([NUM_CONTROL_STEPS, ACCUMULATED_N_NUM_STEPS, 2, MOISTURE_NUM_STEPS, AMMONIUM_NUM_STEPS, NITRATE_NUM_STEPS], np.float64)
 
