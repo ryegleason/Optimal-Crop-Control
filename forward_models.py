@@ -44,7 +44,7 @@ f_n = np.vectorize(lambda s: s / FIELD_CAPACITY if s <= FIELD_CAPACITY else (1 -
 
 INORGANIC_N_MODEL_DT_DAYS = 1.0 / 24.0 * 2.0 / 6.0 # dt of 20 minutes
 
-def generate_rain(num_days: int):
+def generate_rain(num_days: int) -> npt.NDArray[np.float64]:
     rain_events = rng.random(num_days) < RAIN_EXISTENCE_RATE
     rain_quantity_mm = rng.exponential(RAIN_MEAN_DEPTH_MM, num_days) * rain_events
     return rain_quantity_mm
