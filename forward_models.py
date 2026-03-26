@@ -45,11 +45,33 @@ f_n = np.vectorize(lambda s: s / FIELD_CAPACITY if s <= FIELD_CAPACITY else (1 -
 INORGANIC_N_MODEL_DT_DAYS = 1.0 / 24.0 * 2.0 / 6.0 # dt of 20 minutes
 
 def generate_rain(num_days: int) -> npt.NDArray[np.float64]:
+    """
+    Generate num_days days worth of rainfall. Rainfalls represent total accumulation over the course of a day
+    :param num_days: How many days of rainfall to generate
+    :return: A 1D numpy array of length num_days, with each entry representing a daily rainfall in millimeters
+    """
     rain_events = rng.random(num_days) < RAIN_EXISTENCE_RATE
     rain_quantity_mm = rng.exponential(RAIN_MEAN_DEPTH_MM, num_days) * rain_events
     return rain_quantity_mm
 
-def hydrology_model(initial_soil_moisture: float, rain_quantity_mm: npt.NDArray[np.float64]) -> Tuple[npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64]]:
+def hydrology_model(initial_soil_moisture: float,
+                    rain_quantity_mm: npt.NDArray[np.float64]) \
+        -> Tuple[npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],
+        npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64]]:
+    """
+    Run the hydrology model from Porporato 2003, with a daily timestep.
+    :param initial_soil_moisture: The starting soil moisture, as a percent in [0,1]
+    :param rain_quantity_mm: A 1D array of daily rainfalls. The hydrology model will run from the beginning of the first
+        day given to the end of the last.
+    :return: A tuple of numpy arrays, all the same shape as rain_quality_mm, representing the daily values of the following:
+        end-of-day soil moisture (as a percent in [0,1])
+        infiltration rate (in mm/day)
+        evaporation rate (in mm/day)
+        transpiration rate (in mm/day)
+        leakage rate (in mm/day)
+        moisture effect on decomposition factor (f_d(s) from Porporato, unitless in [0,1])
+        moisture effect on nitrification factor (f_n(s) from Porporato, unitless in [0,1])
+    """
     num_days = len(rain_quantity_mm)
 
     # Define constants for computational efficiency
@@ -57,130 +79,237 @@ def hydrology_model(initial_soil_moisture: float, rain_quantity_mm: npt.NDArray[
     TRANSPIRATION_SLOPE = MAXIMUM_TRANSPIRATION_RATE_MM_PER_DAY / (MAX_MOISTURE_WITH_CLOSED_STOMATA - WILTING_POINT)
 
     # States and intermediate variables
-    soil_moisture = np.zeros(num_days)
+    end_of_day_soil_moistures = np.zeros(num_days)
     infiltration_rate_mm_per_day = np.zeros(num_days)
     evaporation_rate_mm_per_day = np.zeros(num_days)
     transpiration_rate_mm_per_day = np.zeros(num_days)
     leakage_rate_mm_per_day = np.zeros(num_days)
+    moisture_effect_on_decomposition_factor = np.zeros(num_days)
+    moisture_effect_on_nitrification_factor = np.zeros(num_days)
 
-    soil_moisture[0] = initial_soil_moisture
+    start_of_day_soil_moisture = initial_soil_moisture
 
     for i in range(num_days):
-        infiltration_rate_mm_per_day[i] = min(rain_quantity_mm[i], SOIL_VOID_SPACE_MM * (1 - soil_moisture[i]))
+        infiltration_rate_mm_per_day[i] = min(rain_quantity_mm[i], SOIL_VOID_SPACE_MM * (1 - start_of_day_soil_moisture))
 
         # evaporation
-        if soil_moisture[i] < HYGROSCOPIC_POINT:
+        if start_of_day_soil_moisture < HYGROSCOPIC_POINT:
             evaporation_rate_mm_per_day[i] = 0
-        elif soil_moisture[i] <= WILTING_POINT:
-            evaporation_rate_mm_per_day[i] = MAXIMUM_EVAPORATION_RATE_MM_PER_DAY * (soil_moisture[i] - HYGROSCOPIC_POINT)
+        elif start_of_day_soil_moisture <= WILTING_POINT:
+            evaporation_rate_mm_per_day[i] = MAXIMUM_EVAPORATION_RATE_MM_PER_DAY * (start_of_day_soil_moisture - HYGROSCOPIC_POINT)
         else:
             evaporation_rate_mm_per_day[i] = MAXIMUM_EVAPORATION_RATE_MM_PER_DAY
 
         # Transpiration
-        if soil_moisture[i] <= WILTING_POINT:
+        if start_of_day_soil_moisture <= WILTING_POINT:
             transpiration_rate_mm_per_day[i] = 0
-        elif soil_moisture[i] <= MAX_MOISTURE_WITH_CLOSED_STOMATA:
-            transpiration_rate_mm_per_day[i] = TRANSPIRATION_SLOPE * (soil_moisture[i] - WILTING_POINT)
+        elif start_of_day_soil_moisture <= MAX_MOISTURE_WITH_CLOSED_STOMATA:
+            transpiration_rate_mm_per_day[i] = TRANSPIRATION_SLOPE * (start_of_day_soil_moisture - WILTING_POINT)
         else:
             transpiration_rate_mm_per_day[i] = MAXIMUM_TRANSPIRATION_RATE_MM_PER_DAY
 
         # leakage/percolation
-        leakage_rate_mm_per_day[i] = LEAKAGE_COEFF * (np.exp(BETA * (soil_moisture[i] - FIELD_CAPACITY)) - 1)
-        if soil_moisture[i] - (leakage_rate_mm_per_day[i] / SOIL_VOID_SPACE_MM) < FIELD_CAPACITY: # make sure we don't drain more than is possible in very wet fields
-            leakage_rate_mm_per_day[i] = max(0.0, (soil_moisture[i] - FIELD_CAPACITY) * SOIL_VOID_SPACE_MM)
+        leakage_rate_mm_per_day[i] = LEAKAGE_COEFF * (np.exp(BETA * (start_of_day_soil_moisture - FIELD_CAPACITY)) - 1)
+        if start_of_day_soil_moisture - (leakage_rate_mm_per_day[i] / SOIL_VOID_SPACE_MM) < FIELD_CAPACITY: # make sure we don't drain more than is possible in very wet fields
+            leakage_rate_mm_per_day[i] = max(0.0, (start_of_day_soil_moisture - FIELD_CAPACITY) * SOIL_VOID_SPACE_MM)
 
-        if i + 1 < num_days:
-            soil_moisture[i+1] = soil_moisture[i] + (infiltration_rate_mm_per_day[i] - evaporation_rate_mm_per_day[i] - transpiration_rate_mm_per_day[i] - leakage_rate_mm_per_day[i]) / SOIL_VOID_SPACE_MM
 
-    moisture_effect_on_decomposition_factor = f_d(soil_moisture)
-    moisture_effect_on_nitrification_factor = f_n(soil_moisture)
+        end_of_day_soil_moistures[i] = start_of_day_soil_moisture + (infiltration_rate_mm_per_day[i] - evaporation_rate_mm_per_day[i] - transpiration_rate_mm_per_day[i] - leakage_rate_mm_per_day[i]) / SOIL_VOID_SPACE_MM
+        daily_average_soil_moisture = (start_of_day_soil_moisture + end_of_day_soil_moistures[i]) / 2.
+        moisture_effect_on_decomposition_factor[i] = f_d(daily_average_soil_moisture)
+        moisture_effect_on_nitrification_factor[i] = f_n(daily_average_soil_moisture)
 
-    if any(infiltration_rate_mm_per_day < 0) or any(evaporation_rate_mm_per_day < 0) or any(transpiration_rate_mm_per_day < 0) or any(leakage_rate_mm_per_day < 0) or any(soil_moisture < 0) or any(soil_moisture > 1) or any(moisture_effect_on_decomposition_factor < 0) or any(moisture_effect_on_decomposition_factor > 1) or any(moisture_effect_on_nitrification_factor < 0) or any(moisture_effect_on_nitrification_factor > 1):
+        start_of_day_soil_moisture = end_of_day_soil_moistures[i]
+
+    if any(infiltration_rate_mm_per_day < 0) or any(evaporation_rate_mm_per_day < 0) or any(transpiration_rate_mm_per_day < 0) or any(leakage_rate_mm_per_day < 0) or any(end_of_day_soil_moistures < 0) or any(end_of_day_soil_moistures > 1) or any(moisture_effect_on_decomposition_factor < 0) or any(moisture_effect_on_decomposition_factor > 1) or any(moisture_effect_on_nitrification_factor < 0) or any(moisture_effect_on_nitrification_factor > 1):
         print("Sanity check failed in hydrology model!")
 
-    return soil_moisture, infiltration_rate_mm_per_day, evaporation_rate_mm_per_day, transpiration_rate_mm_per_day, leakage_rate_mm_per_day, moisture_effect_on_decomposition_factor, moisture_effect_on_nitrification_factor
+    return end_of_day_soil_moistures, infiltration_rate_mm_per_day, evaporation_rate_mm_per_day, transpiration_rate_mm_per_day, leakage_rate_mm_per_day, moisture_effect_on_decomposition_factor, moisture_effect_on_nitrification_factor
 
-def soil_organic_model(initial_litter_carbon_gC_per_m3: float, initial_litter_nitrogen_gN_per_m3: float, initial_microbial_carbon_gC_per_m3: float, initial_humus_carbon_gC_per_m3: float, moisture_decomposition_factor: npt.NDArray[np.float64], added_residue_nitrogen_gN_per_m3_per_day: npt.NDArray[np.float64], added_residue_carbon_gC_per_m3_per_day: npt.NDArray[np.float64]):
-    array_length = len(moisture_decomposition_factor)
-    assert len(added_residue_nitrogen_gN_per_m3_per_day) == array_length
-    assert len(added_residue_carbon_gC_per_m3_per_day) == array_length
+def soil_organic_model(initial_litter_carbon_gC_per_m3: float,
+                       initial_litter_nitrogen_gN_per_m3: float,
+                       initial_microbial_carbon_gC_per_m3: float,
+                       initial_humus_carbon_gC_per_m3: float,
+                       moisture_decomposition_factor: npt.NDArray[np.float64],
+                       added_residue_nitrogen_gN_per_m3_per_day: npt.NDArray[np.float64],
+                       added_residue_carbon_gC_per_m3_per_day: npt.NDArray[np.float64]) \
+        -> Tuple[npt.NDArray[np.float64],npt.NDArray[np.float64],npt.NDArray[np.float64],
+        npt.NDArray[np.float64],npt.NDArray[np.float64]]:
+    """
+    Run the part of the Porporato (2003) soil model corresponding to the organic material soil states, under the
+    assumption that decomposition is not rate-limited by N availability, i.e. phi = 1. Runs on a daily timestep, for a
+    number of days equal to the length of moisture_decomposition_factor, which must be the same as the lengths of
+    added_residue_nitrogen_gN_per_m3_per_day and added_residue_carbon_gC_per_m3_per_day
+
+    :param initial_litter_carbon_gC_per_m3: The initial density of litter C in the soil, in gC/m^3
+    :param initial_litter_nitrogen_gN_per_m3: The initial density of litter N in the soil, in gN/m^3
+    :param initial_microbial_carbon_gC_per_m3: The initial density of microbial C in the soil, in gC/m^3
+    :param initial_humus_carbon_gC_per_m3: The initial density of humus C in the soil, in gC/m^3
+    :param moisture_decomposition_factor: A 1D np array containing the daily values of f_d(s) from Porporato, which are
+        unitless in [0,1]
+    :param added_residue_nitrogen_gN_per_m3_per_day: A 1D np array containing the daily mass of N added to the litter
+        pool from residue fall, in gN/m^3
+    :param added_residue_carbon_gC_per_m3_per_day: A 1D np array containing the daily mass of C added to the litter
+        pool from residue fall, in gC/m^3
+    :return: A tuple of numpy arrays, all the same shape as moisture_decomposition_factor, representing the daily values of the following:
+        end-of-day litter carbon, in gC/m^3
+        end-of-day litter N, in gN/m^3
+        end-of-day microbial C, in gN/m^3
+        end-of-day humus C, in gN/m^3
+        net flux of organic to mineral nitrogen, in gN/m^3/day. Values may be negative if there's more immobilization
+            than mineralization.
+    """
+    num_days = len(moisture_decomposition_factor)
+    assert len(added_residue_nitrogen_gN_per_m3_per_day) == num_days
+    assert len(added_residue_carbon_gC_per_m3_per_day) == num_days
 
     # Set up arrays
-    litter_cn_ratio_gC_per_gN = np.ndarray(array_length, np.float64)
-    humified_fraction_of_decomposed_litter_carbon = np.ndarray(array_length, np.float64)
-    microbified_fraction_of_decomposed_litter_carbon = np.ndarray(array_length, np.float64)
-    litter_decomposition_carbon_gC_per_m3_per_day = np.ndarray(array_length, np.float64)
-    humus_decomposition_carbon_gC_per_m3_per_day = np.ndarray(array_length, np.float64)
-    microbial_death_carbon_gC_per_m3_per_day = np.ndarray(array_length, np.float64)
-    litter_carbon_gC_per_m3 = np.ndarray(array_length, np.float64)
-    litter_nitrogen_gN_per_m3 = np.ndarray(array_length, np.float64)
-    microbial_carbon_gC_per_m3 = np.ndarray(array_length, np.float64)
-    humus_carbon_gC_per_m3 = np.ndarray(array_length, np.float64)
+    litter_decomposition_carbon_gC_per_m3_per_day = np.ndarray(num_days, np.float64)
+    humus_decomposition_carbon_gC_per_m3_per_day = np.ndarray(num_days, np.float64)
+    microbial_death_carbon_gC_per_m3_per_day = np.ndarray(num_days, np.float64)
+
+    # "sod" here stands for "start of day". These arrays are 1 longer than the others, because we actually care about
+    # the end-of-day values, and the end of day n is the start of day n+1
+    sod_litter_cn_ratio_gC_per_gN = np.ndarray(num_days + 1, np.float64)
+    sod_humified_fraction_of_decomposed_litter_carbon = np.ndarray(num_days + 1, np.float64)
+    sod_microbified_fraction_of_decomposed_litter_carbon = np.ndarray(num_days + 1, np.float64)
+    sod_litter_carbon_gC_per_m3 = np.ndarray(num_days + 1, np.float64)
+    sod_litter_nitrogen_gN_per_m3 = np.ndarray(num_days + 1, np.float64)
+    sod_microbial_carbon_gC_per_m3 = np.ndarray(num_days + 1, np.float64)
+    sod_humus_carbon_gC_per_m3 = np.ndarray(num_days + 1, np.float64)
 
     # Assign initial values
-    litter_carbon_gC_per_m3[0] = initial_litter_carbon_gC_per_m3
-    litter_nitrogen_gN_per_m3[0] = initial_litter_nitrogen_gN_per_m3
-    microbial_carbon_gC_per_m3[0] = initial_microbial_carbon_gC_per_m3
-    humus_carbon_gC_per_m3[0] = initial_humus_carbon_gC_per_m3
+    sod_litter_carbon_gC_per_m3[0] = initial_litter_carbon_gC_per_m3
+    sod_litter_nitrogen_gN_per_m3[0] = initial_litter_nitrogen_gN_per_m3
+    sod_microbial_carbon_gC_per_m3[0] = initial_microbial_carbon_gC_per_m3
+    sod_humus_carbon_gC_per_m3[0] = initial_humus_carbon_gC_per_m3
 
     # Simulate
-    for i in range(array_length):
+    for i in range(num_days + 1):
         # intermediaries
-        litter_cn_ratio_gC_per_gN[i] = litter_carbon_gC_per_m3[i] / litter_nitrogen_gN_per_m3[i]
-        humified_fraction_of_decomposed_litter_carbon[i] = min(MAX_HUMIFIED_FRACTION_OF_DECOMPOSED_LITTER, HUMUS_CN_RATIO / litter_cn_ratio_gC_per_gN[i])
-        microbified_fraction_of_decomposed_litter_carbon[i] = NON_RESPIRATED_FRACTION_OF_DECOMPOSED_CARBON - humified_fraction_of_decomposed_litter_carbon[i]
-        litter_decomposition_carbon_gC_per_m3_per_day[i] = PROPORTION_LITTER_DECOMPOSING_PER_BIOMASS_PER_DAY * moisture_decomposition_factor[i] * microbial_carbon_gC_per_m3[i] * litter_carbon_gC_per_m3[i]
-        humus_decomposition_carbon_gC_per_m3_per_day[i] = PROPORTION_HUMUS_DECOMPOSING_PER_BIOMASS_PER_DAY * moisture_decomposition_factor[i] * microbial_carbon_gC_per_m3[i] * humus_carbon_gC_per_m3[i]
-        microbial_death_carbon_gC_per_m3_per_day[i] = PROPORTION_BIOMASS_DYING_PER_DAY * microbial_carbon_gC_per_m3[i]
+        sod_litter_cn_ratio_gC_per_gN[i] = sod_litter_carbon_gC_per_m3[i] / sod_litter_nitrogen_gN_per_m3[i]
+        sod_humified_fraction_of_decomposed_litter_carbon[i] = min(MAX_HUMIFIED_FRACTION_OF_DECOMPOSED_LITTER, HUMUS_CN_RATIO / sod_litter_cn_ratio_gC_per_gN[i])
+        sod_microbified_fraction_of_decomposed_litter_carbon[i] = NON_RESPIRATED_FRACTION_OF_DECOMPOSED_CARBON - sod_humified_fraction_of_decomposed_litter_carbon[i]
 
-        # states
-        if i + 1 < array_length:
-            litter_carbon_gC_per_m3[i + 1] = litter_carbon_gC_per_m3[i] + added_residue_carbon_gC_per_m3_per_day[i] + microbial_death_carbon_gC_per_m3_per_day[i] - litter_decomposition_carbon_gC_per_m3_per_day[i]
-            litter_nitrogen_gN_per_m3[i + 1] = litter_nitrogen_gN_per_m3[i] + added_residue_nitrogen_gN_per_m3_per_day[i] + (microbial_death_carbon_gC_per_m3_per_day[i] / BIOMASS_CN_RATIO) - (litter_decomposition_carbon_gC_per_m3_per_day[i] / litter_cn_ratio_gC_per_gN[i])
-            microbial_carbon_gC_per_m3[i + 1] = microbial_carbon_gC_per_m3[i] + microbified_fraction_of_decomposed_litter_carbon[i] * litter_decomposition_carbon_gC_per_m3_per_day[i] + NON_RESPIRATED_FRACTION_OF_DECOMPOSED_CARBON * humus_decomposition_carbon_gC_per_m3_per_day[i] - microbial_death_carbon_gC_per_m3_per_day[i]
-            humus_carbon_gC_per_m3[i + 1] = humus_carbon_gC_per_m3[i] + humified_fraction_of_decomposed_litter_carbon[i] * litter_decomposition_carbon_gC_per_m3_per_day[i] - humus_decomposition_carbon_gC_per_m3_per_day[i]
+        if i < num_days:
+            litter_decomposition_carbon_gC_per_m3_per_day[i] = PROPORTION_LITTER_DECOMPOSING_PER_BIOMASS_PER_DAY * moisture_decomposition_factor[i] * sod_microbial_carbon_gC_per_m3[i] * sod_litter_carbon_gC_per_m3[i]
+            humus_decomposition_carbon_gC_per_m3_per_day[i] = PROPORTION_HUMUS_DECOMPOSING_PER_BIOMASS_PER_DAY * moisture_decomposition_factor[i] * sod_microbial_carbon_gC_per_m3[i] * sod_humus_carbon_gC_per_m3[i]
+            microbial_death_carbon_gC_per_m3_per_day[i] = PROPORTION_BIOMASS_DYING_PER_DAY * sod_microbial_carbon_gC_per_m3[i]
+
+            sod_litter_carbon_gC_per_m3[i + 1] = sod_litter_carbon_gC_per_m3[i] + added_residue_carbon_gC_per_m3_per_day[i] + microbial_death_carbon_gC_per_m3_per_day[i] - litter_decomposition_carbon_gC_per_m3_per_day[i]
+            sod_litter_nitrogen_gN_per_m3[i + 1] = sod_litter_nitrogen_gN_per_m3[i] + added_residue_nitrogen_gN_per_m3_per_day[i] + (microbial_death_carbon_gC_per_m3_per_day[i] / BIOMASS_CN_RATIO) - (litter_decomposition_carbon_gC_per_m3_per_day[i] / sod_litter_cn_ratio_gC_per_gN[i])
+            sod_microbial_carbon_gC_per_m3[i + 1] = sod_microbial_carbon_gC_per_m3[i] + sod_microbified_fraction_of_decomposed_litter_carbon[i] * litter_decomposition_carbon_gC_per_m3_per_day[i] + NON_RESPIRATED_FRACTION_OF_DECOMPOSED_CARBON * humus_decomposition_carbon_gC_per_m3_per_day[i] - microbial_death_carbon_gC_per_m3_per_day[i]
+            sod_humus_carbon_gC_per_m3[i + 1] = sod_humus_carbon_gC_per_m3[i] + sod_humified_fraction_of_decomposed_litter_carbon[i] * litter_decomposition_carbon_gC_per_m3_per_day[i] - humus_decomposition_carbon_gC_per_m3_per_day[i]
 
         # External flows
-    excess_bio_nitrogen_per_litter_carbon_decomposed_gN_per_gC = 1 / litter_cn_ratio_gC_per_gN - humified_fraction_of_decomposed_litter_carbon / HUMUS_CN_RATIO - microbified_fraction_of_decomposed_litter_carbon / BIOMASS_CN_RATIO
-    net_flux_to_mineral_nitrogen_gN_per_m3_per_day = EXCESS_BIO_NITROGEN_PER_HUMUS_CARBON_DECOMPOSED * humus_decomposition_carbon_gC_per_m3_per_day + excess_bio_nitrogen_per_litter_carbon_decomposed_gN_per_gC * litter_decomposition_carbon_gC_per_m3_per_day
+    excess_bio_nitrogen_per_litter_carbon_decomposed_gN_per_gC = 1 / sod_litter_cn_ratio_gC_per_gN - sod_humified_fraction_of_decomposed_litter_carbon / HUMUS_CN_RATIO - sod_microbified_fraction_of_decomposed_litter_carbon / BIOMASS_CN_RATIO
+    net_flux_to_mineral_nitrogen_gN_per_m3_per_day = EXCESS_BIO_NITROGEN_PER_HUMUS_CARBON_DECOMPOSED * humus_decomposition_carbon_gC_per_m3_per_day + excess_bio_nitrogen_per_litter_carbon_decomposed_gN_per_gC[:-1] * litter_decomposition_carbon_gC_per_m3_per_day
 
-    if any(humified_fraction_of_decomposed_litter_carbon < 0) or any(microbified_fraction_of_decomposed_litter_carbon < 0) or any(litter_decomposition_carbon_gC_per_m3_per_day < 0) or any(humus_decomposition_carbon_gC_per_m3_per_day < 0) or any(microbial_carbon_gC_per_m3 < 0) or any(microbial_carbon_gC_per_m3 > 500) or any(litter_carbon_gC_per_m3 < 0) or any(litter_carbon_gC_per_m3 > 10000) or any(litter_nitrogen_gN_per_m3 < 0) or any(litter_nitrogen_gN_per_m3 > 500) or any(microbial_carbon_gC_per_m3 < 0) or any(microbial_carbon_gC_per_m3 > 500) or any(humus_carbon_gC_per_m3 < 0) or any(humus_carbon_gC_per_m3 > 100000):
+    if (any(sod_humified_fraction_of_decomposed_litter_carbon < 0)
+            or any(sod_microbified_fraction_of_decomposed_litter_carbon < 0)
+            or any(litter_decomposition_carbon_gC_per_m3_per_day < 0)
+            or any(humus_decomposition_carbon_gC_per_m3_per_day < 0)
+            or any(sod_microbial_carbon_gC_per_m3 < 0)
+            or any(sod_microbial_carbon_gC_per_m3 > 500)
+            or any(sod_litter_carbon_gC_per_m3 < 0)
+            or any(sod_litter_carbon_gC_per_m3 > 10000)
+            or any(sod_litter_nitrogen_gN_per_m3 < 0)
+            or any(sod_litter_nitrogen_gN_per_m3 > 500)
+            or any(sod_microbial_carbon_gC_per_m3 < 0)
+            or any(sod_microbial_carbon_gC_per_m3 > 500)
+            or any(sod_humus_carbon_gC_per_m3 < 0)
+            or any(sod_humus_carbon_gC_per_m3 > 100000)):
         print("Sanity check failed in soil organic model!")
 
-    return litter_carbon_gC_per_m3, litter_nitrogen_gN_per_m3, microbial_carbon_gC_per_m3, humus_carbon_gC_per_m3, net_flux_to_mineral_nitrogen_gN_per_m3_per_day
+    # We return the start-of-day values for days 1 to n+1, which is equivalent to end-of-day values for days 0 to n.
+    return sod_litter_carbon_gC_per_m3[1:], sod_litter_nitrogen_gN_per_m3[1:], sod_microbial_carbon_gC_per_m3[1:], sod_humus_carbon_gC_per_m3[1:], net_flux_to_mineral_nitrogen_gN_per_m3_per_day
 
-def inorganic_nitrogen_model(initial_ammonium_gN_per_m3: float, initial_nitrate_gN_per_m3: float, initial_day: float, leakage_mm_per_day: npt.NDArray[np.float64], transpiration_mm_per_day: npt.NDArray[np.float64], soil_moisture: npt.NDArray[np.float64], net_flux_to_mineral_nitrogen_gN_per_m3_per_day: npt.NDArray[np.float64], microbial_carbon_gC_per_m3: npt.NDArray[np.float64], day_to_plant_N_demand_gN_per_m3_per_day: np.vectorize, input_dt_days: float = 1.0, output_dt_days: float = INORGANIC_N_MODEL_DT_DAYS) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64],npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool], npt.NDArray[np.float64]]:
-    array_length = len(leakage_mm_per_day)
-    assert len(transpiration_mm_per_day) == array_length
-    assert len(soil_moisture) == array_length
-    assert len(net_flux_to_mineral_nitrogen_gN_per_m3_per_day) == array_length
-    assert len(microbial_carbon_gC_per_m3) == array_length
+def inorganic_nitrogen_model(initial_ammonium_gN_per_m3: float,
+                             initial_nitrate_gN_per_m3: float,
+                             initial_day: float,
+                             leakage_mm_per_day: npt.NDArray[np.float64],
+                             transpiration_mm_per_day: npt.NDArray[np.float64],
+                             start_of_period_soil_moistures: npt.NDArray[np.float64],
+                             net_flux_to_mineral_nitrogen_gN_per_m3_per_day: npt.NDArray[np.float64],
+                             start_of_period_microbial_carbon_gC_per_m3: npt.NDArray[np.float64],
+                             day_to_plant_N_demand_gN_per_m3_per_day: np.vectorize,
+                             input_dt_days: float = 1.0,
+                             output_dt_days: float = INORGANIC_N_MODEL_DT_DAYS) \
+        -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64],npt.NDArray[np.float64],
+        npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64],
+        npt.NDArray[np.bool], npt.NDArray[np.float64]]:
+    """
+    Run the inorganic N and plant uptake components of the Porporato (2003) model.
+    :param initial_ammonium_gN_per_m3: The initial value for the soil ammonium pool, in gN/m^3
+    :param initial_nitrate_gN_per_m3: The initial value for the soil nitrate pool, in gN/m^3
+    :param initial_day: The starting day for the model (used for time-varying plant N demand)
+    :param leakage_mm_per_day: a 1D np array where each value is the leakage rate of water out of the soil, in mm/day
+    :param transpiration_mm_per_day: An array the same shape as leakage_mm_per_day, representing the transpiration
+        rate of water out of the soil, in mm/day
+    :param start_of_period_soil_moistures: a 1D np array with 1 more element than leakage_mm_per_day, representing the
+        soil moisture at the start of each model period, as a percent in [0,1]. It is larger so the first element can be
+        the initial soil moisture, and the last element the final moisture.
+    :param net_flux_to_mineral_nitrogen_gN_per_m3_per_day: An array the same shape as leakage_mm_per_day, representing
+        the net flux of mineral to organic N, in gN/m^3/day. Values may be negative.
+    :param start_of_period_microbial_carbon_gC_per_m3: An array the same shape as start_of_period_soil_moisture,
+        representing the soil microbe density in gC/m^3.
+    :param day_to_plant_N_demand_gN_per_m3_per_day: A vectorized function to calculate the plant N demand, in gN/m^3/day,
+        given an absolute day.
+    :param input_dt_days: The timestep for the input arrays (leakage_mm_per_day, start_of_period_soil_moisture,
+        net_flux_to_mineral_nitrogen_gN_per_m3_per_day, start_of_period_microbial_carbon_gC_per_m3) in days.
+    :param output_dt_days: The timestep to run this part of the model at, in days.
+    :return: A tuple of 1D arrays, all the same shape, representing the values of the following at each model timestep:
+      end-of-period soil ammonium, in gN/m^3
+      end-of-period soil nitrate, in gN/m^3
+      rate of ammonium leaching, in gN/m^3/day
+      rate of nitrate leaching, in gN/m^3/day
+      rate of plant passive ammonium uptake, in gN/m^3/day
+      rate of plant passive nitrate uptake, in gN/m^3/day
+      rate of plant active ammonium uptake, in gN/m^3/day
+      rate of plant active nitrate uptake, in gN/m^3/day
+      whether the assumption that phi=1 was violated, as a boolean
+      rate of nitrification, in gN/m^3/day
+    """
+    input_array_length = len(leakage_mm_per_day)
+    assert len(transpiration_mm_per_day) == input_array_length
+    assert len(net_flux_to_mineral_nitrogen_gN_per_m3_per_day) == input_array_length
+    assert len(start_of_period_soil_moistures) == input_array_length + 1
+    assert len(start_of_period_microbial_carbon_gC_per_m3) == input_array_length + 1
+    num_days = round(input_array_length * input_dt_days)
 
-    # scaled arrays, for computational efficiency
-    moisture_nitrification_factor = f_n(soil_moisture)
-    moisture_decomposition_factor = f_d(soil_moisture)
-    volume_water_per_unit_area_mm = soil_moisture * SOIL_DEPTH_MM * SOIL_POROSITY
-    volume_water_per_unit_area_mm[volume_water_per_unit_area_mm == 0] = 0.01 # to avoid divide by zero
-    nitrification_rate_constant = moisture_nitrification_factor * PROPORTION_AMMONIUM_NITRIFIED_PER_BIOMASS_PER_DAY * microbial_carbon_gC_per_m3
-    ammonium_passive_uptake_rate_constant = DISSOLVED_FRACTION_AMMONIUM * transpiration_mm_per_day / volume_water_per_unit_area_mm
-    ammonium_max_active_uptake_rate_constant = DISSOLVED_FRACTION_AMMONIUM * DIFFUSION_COEFFICIENT_MM_PER_DAY / volume_water_per_unit_area_mm * (soil_moisture ** DIFFUSION_MOISTURE_DEPENDENCE_EXPONENT)
-    ammonium_leaching_rate_constant = DISSOLVED_FRACTION_AMMONIUM * leakage_mm_per_day / volume_water_per_unit_area_mm
-    nitrate_passive_uptake_rate_constant = DISSOLVED_FRACTION_NITRATE * transpiration_mm_per_day / volume_water_per_unit_area_mm
-    nitrate_max_active_uptake_rate_constant = DISSOLVED_FRACTION_NITRATE * DIFFUSION_COEFFICIENT_MM_PER_DAY / volume_water_per_unit_area_mm * (soil_moisture ** DIFFUSION_MOISTURE_DEPENDENCE_EXPONENT)
-    nitrate_leaching_rate_constant = DISSOLVED_FRACTION_NITRATE * leakage_mm_per_day / volume_water_per_unit_area_mm
-    # constants
+    # timing
     time_stretch = input_dt_days / output_dt_days
-    output_array_length = int(array_length * time_stretch)
+    output_array_length = int(input_array_length * time_stretch)
+    # sop stands for "start of period"
+    sop_absolute_day = np.linspace(initial_day, initial_day + num_days, output_array_length + 1)
+    input_sop_absolute_day = np.linspace(initial_day, initial_day + num_days, input_array_length + 1)
+
+    # interpolate input arrays, evaluating at the middle of each output time step
+    interpolated_soil_moisture = np.interp(sop_absolute_day[:-1] + output_dt_days / 2.0, input_sop_absolute_day, start_of_period_soil_moistures)
+    interpolated_microbial_carbon_gC_per_m3 = np.interp(sop_absolute_day[:-1] + output_dt_days / 2.0, input_sop_absolute_day, start_of_period_microbial_carbon_gC_per_m3)
+
+    # Pre-calculate as much as possible using vectorized operations
+    moisture_nitrification_factor = f_n(interpolated_soil_moisture)
+    moisture_decomposition_factor = f_d(interpolated_microbial_carbon_gC_per_m3)
+    volume_water_per_unit_area_mm = interpolated_soil_moisture * SOIL_DEPTH_MM * SOIL_POROSITY
+    volume_water_per_unit_area_mm[volume_water_per_unit_area_mm == 0] = 0.0001 # to avoid divide by zero
+    nitrification_rate_constant = moisture_nitrification_factor * PROPORTION_AMMONIUM_NITRIFIED_PER_BIOMASS_PER_DAY * interpolated_microbial_carbon_gC_per_m3
+    ammonium_passive_uptake_rate_constant = DISSOLVED_FRACTION_AMMONIUM * np.repeat(transpiration_mm_per_day, time_stretch) / volume_water_per_unit_area_mm
+    ammonium_max_active_uptake_rate_constant = DISSOLVED_FRACTION_AMMONIUM * DIFFUSION_COEFFICIENT_MM_PER_DAY / volume_water_per_unit_area_mm * (interpolated_soil_moisture ** DIFFUSION_MOISTURE_DEPENDENCE_EXPONENT)
+    ammonium_leaching_rate_constant = DISSOLVED_FRACTION_AMMONIUM * np.repeat(leakage_mm_per_day, time_stretch) / volume_water_per_unit_area_mm
+    nitrate_passive_uptake_rate_constant = DISSOLVED_FRACTION_NITRATE * np.repeat(transpiration_mm_per_day, time_stretch) / volume_water_per_unit_area_mm
+    nitrate_max_active_uptake_rate_constant = DISSOLVED_FRACTION_NITRATE * DIFFUSION_COEFFICIENT_MM_PER_DAY / volume_water_per_unit_area_mm * (interpolated_soil_moisture ** DIFFUSION_MOISTURE_DEPENDENCE_EXPONENT)
+    nitrate_leaching_rate_constant = DISSOLVED_FRACTION_NITRATE * np.repeat(leakage_mm_per_day, time_stretch) / volume_water_per_unit_area_mm
+
     # N demand
-    absolute_day = np.linspace(initial_day, initial_day + array_length * input_dt_days, output_array_length)
-    plant_N_demand_gN_per_m3_per_day = day_to_plant_N_demand_gN_per_m3_per_day(absolute_day)
+    plant_N_demand_gN_per_m3_per_day = day_to_plant_N_demand_gN_per_m3_per_day(sop_absolute_day[:-1])
     plant_ammonium_demand_gN_per_m3_per_day = np.zeros(plant_N_demand_gN_per_m3_per_day.shape) #TODO experiment with this, and the balance between ammonium vs nitrate demand
     plant_nitrate_demand_gN_per_m3_per_day = plant_N_demand_gN_per_m3_per_day
 
     # Set up arrays
     available_nitrogen_for_immobilization_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
     maximum_immobilization_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
-    nitrification_assumptions_violation = np.full(output_array_length, False, np.bool)
+    immobilization_assumptions_violation = np.full(output_array_length, False, np.bool)
     nitrification_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
     mineralization_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
     total_immobilization_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
@@ -195,18 +324,20 @@ def inorganic_nitrogen_model(initial_ammonium_gN_per_m3: float, initial_nitrate_
     plant_active_uptake_of_nitrate_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
     nitrate_leaching_gN_per_m3_per_day = np.ndarray(output_array_length, np.float64)
 
-    ammonium_gN_per_m3 = np.ndarray(output_array_length, np.float64)
-    nitrate_gN_per_m3 = np.ndarray(output_array_length, np.float64)
+    # Start of period arrays are 1 longer, because we care about the end of period number output_array_length, which is
+    # the start of period output_array_length + 1
+    sop_ammonium_gN_per_m3 = np.ndarray(output_array_length + 1, np.float64)
+    sop_nitrate_gN_per_m3 = np.ndarray(output_array_length + 1, np.float64)
 
     # Assign initial values
-    ammonium_gN_per_m3[0] = initial_ammonium_gN_per_m3
-    nitrate_gN_per_m3[0] = initial_nitrate_gN_per_m3
+    sop_ammonium_gN_per_m3[0] = initial_ammonium_gN_per_m3
+    sop_nitrate_gN_per_m3[0] = initial_nitrate_gN_per_m3
 
     # Simulate
     for i in range(output_array_length):
         input_index = int(i / time_stretch)
-        available_nitrogen_for_immobilization_gN_per_m3_per_day[i] = MAX_PROPORTION_AMMONIUM_IMMOBILIZED_PER_DAY * ammonium_gN_per_m3[i] + MAX_PROPORTION_NITRATE_IMMOBILIZED_PER_DAY * nitrate_gN_per_m3[i]
-        maximum_immobilization_gN_per_m3_per_day[i] = moisture_decomposition_factor[input_index] * available_nitrogen_for_immobilization_gN_per_m3_per_day[i]
+        available_nitrogen_for_immobilization_gN_per_m3_per_day[i] = MAX_PROPORTION_AMMONIUM_IMMOBILIZED_PER_DAY * sop_ammonium_gN_per_m3[i] + MAX_PROPORTION_NITRATE_IMMOBILIZED_PER_DAY * sop_nitrate_gN_per_m3[i]
+        maximum_immobilization_gN_per_m3_per_day[i] = moisture_decomposition_factor[i] * available_nitrogen_for_immobilization_gN_per_m3_per_day[i]
         if net_flux_to_mineral_nitrogen_gN_per_m3_per_day[input_index] > 0:
             mineralization_gN_per_m3_per_day[i] = net_flux_to_mineral_nitrogen_gN_per_m3_per_day[input_index]
             total_immobilization_gN_per_m3_per_day[i] = 0
@@ -215,34 +346,34 @@ def inorganic_nitrogen_model(initial_ammonium_gN_per_m3: float, initial_nitrate_
             total_immobilization_gN_per_m3_per_day[i] = -net_flux_to_mineral_nitrogen_gN_per_m3_per_day[input_index]
         if total_immobilization_gN_per_m3_per_day[i] > maximum_immobilization_gN_per_m3_per_day[i]:
             print("Insufficient nitrogen to meet immobilization demand, assumptions violated!")
-            nitrification_assumptions_violation[i] = True
+            immobilization_assumptions_violation[i] = True
 
-        nitrification_gN_per_m3_per_day[i] = nitrification_rate_constant[input_index] * ammonium_gN_per_m3[i]
+        nitrification_gN_per_m3_per_day[i] = nitrification_rate_constant[i] * sop_ammonium_gN_per_m3[i]
 
         # Duplicated between ammonium and nitrate
-        immobilization_from_ammonium_gN_per_m3_per_day[i] = 0 if available_nitrogen_for_immobilization_gN_per_m3_per_day[i] == 0  else MAX_PROPORTION_AMMONIUM_IMMOBILIZED_PER_DAY * ammonium_gN_per_m3[i] / available_nitrogen_for_immobilization_gN_per_m3_per_day[i] * total_immobilization_gN_per_m3_per_day[i]
-        plant_passive_uptake_of_ammonium_gN_per_m3_per_day[i] = ammonium_passive_uptake_rate_constant[input_index] * ammonium_gN_per_m3[i]
-        maximum_active_ammonium_uptake_gN_per_m3_per_day[i] = ammonium_max_active_uptake_rate_constant[input_index] * ammonium_gN_per_m3[i]
+        immobilization_from_ammonium_gN_per_m3_per_day[i] = 0 if available_nitrogen_for_immobilization_gN_per_m3_per_day[i] == 0  else MAX_PROPORTION_AMMONIUM_IMMOBILIZED_PER_DAY * sop_ammonium_gN_per_m3[i] / available_nitrogen_for_immobilization_gN_per_m3_per_day[i] * total_immobilization_gN_per_m3_per_day[i]
+        plant_passive_uptake_of_ammonium_gN_per_m3_per_day[i] = ammonium_passive_uptake_rate_constant[i] * sop_ammonium_gN_per_m3[i]
+        maximum_active_ammonium_uptake_gN_per_m3_per_day[i] = ammonium_max_active_uptake_rate_constant[i] * sop_ammonium_gN_per_m3[i]
         plant_active_uptake_of_ammonium_gN_per_m3_per_day[i] = max(0.0, min(maximum_active_ammonium_uptake_gN_per_m3_per_day[i], plant_ammonium_demand_gN_per_m3_per_day[i] - plant_passive_uptake_of_ammonium_gN_per_m3_per_day[i]))
-        ammonium_leaching_gN_per_m3_per_day[i] = ammonium_leaching_rate_constant[input_index] * ammonium_gN_per_m3[i]
+        ammonium_leaching_gN_per_m3_per_day[i] = ammonium_leaching_rate_constant[i] * sop_ammonium_gN_per_m3[i]
 
-        immobilization_from_nitrate_gN_per_m3_per_day[i] = 0 if available_nitrogen_for_immobilization_gN_per_m3_per_day[i] == 0  else MAX_PROPORTION_NITRATE_IMMOBILIZED_PER_DAY * nitrate_gN_per_m3[i] / available_nitrogen_for_immobilization_gN_per_m3_per_day[i] * total_immobilization_gN_per_m3_per_day[i]
-        plant_passive_uptake_of_nitrate_gN_per_m3_per_day[i] = nitrate_passive_uptake_rate_constant[input_index] * nitrate_gN_per_m3[i]
-        maximum_active_nitrate_uptake_gN_per_m3_per_day[i] = nitrate_max_active_uptake_rate_constant[input_index] * nitrate_gN_per_m3[i]
+        immobilization_from_nitrate_gN_per_m3_per_day[i] = 0 if available_nitrogen_for_immobilization_gN_per_m3_per_day[i] == 0  else MAX_PROPORTION_NITRATE_IMMOBILIZED_PER_DAY * sop_nitrate_gN_per_m3[i] / available_nitrogen_for_immobilization_gN_per_m3_per_day[i] * total_immobilization_gN_per_m3_per_day[i]
+        plant_passive_uptake_of_nitrate_gN_per_m3_per_day[i] = nitrate_passive_uptake_rate_constant[i] * sop_nitrate_gN_per_m3[i]
+        maximum_active_nitrate_uptake_gN_per_m3_per_day[i] = nitrate_max_active_uptake_rate_constant[i] * sop_nitrate_gN_per_m3[i]
         plant_active_uptake_of_nitrate_gN_per_m3_per_day[i] = max(0.0, min(maximum_active_nitrate_uptake_gN_per_m3_per_day[i], plant_nitrate_demand_gN_per_m3_per_day[i] - plant_passive_uptake_of_nitrate_gN_per_m3_per_day[i]))
-        nitrate_leaching_gN_per_m3_per_day[i] = nitrate_leaching_rate_constant[input_index] * nitrate_gN_per_m3[i]
+        nitrate_leaching_gN_per_m3_per_day[i] = nitrate_leaching_rate_constant[i] * sop_nitrate_gN_per_m3[i]
 
         # States
-        if (i + 1) < output_array_length:
-            ammonium_scaling_fix = 1.0
-            ammonium_gN_per_m3[i + 1] = ammonium_gN_per_m3[i] + (mineralization_gN_per_m3_per_day[i] - immobilization_from_ammonium_gN_per_m3_per_day[i] - nitrification_gN_per_m3_per_day[i] - ammonium_leaching_gN_per_m3_per_day[i] - plant_passive_uptake_of_ammonium_gN_per_m3_per_day[i] - plant_active_uptake_of_ammonium_gN_per_m3_per_day[i]) * output_dt_days
-            if ammonium_gN_per_m3[i + 1] < 0:
-                ammonium_scaling_fix = ammonium_gN_per_m3[i] / (ammonium_gN_per_m3[i] - ammonium_gN_per_m3[i + 1])
-                print("Ammonium underflow error! Applying scaling fix of", ammonium_scaling_fix)
-                ammonium_gN_per_m3[i + 1] = 0.0
-            nitrate_gN_per_m3[i + 1] = nitrate_gN_per_m3[i] + (nitrification_gN_per_m3_per_day[i] * ammonium_scaling_fix - immobilization_from_nitrate_gN_per_m3_per_day[i] - nitrate_leaching_gN_per_m3_per_day[i] - plant_passive_uptake_of_nitrate_gN_per_m3_per_day[i] - plant_active_uptake_of_nitrate_gN_per_m3_per_day[i]) * output_dt_days
+        ammonium_scaling_fix = 1.0
+        sop_ammonium_gN_per_m3[i + 1] = sop_ammonium_gN_per_m3[i] + (mineralization_gN_per_m3_per_day[i] - immobilization_from_ammonium_gN_per_m3_per_day[i] - nitrification_gN_per_m3_per_day[i] - ammonium_leaching_gN_per_m3_per_day[i] - plant_passive_uptake_of_ammonium_gN_per_m3_per_day[i] - plant_active_uptake_of_ammonium_gN_per_m3_per_day[i]) * output_dt_days
+        if sop_ammonium_gN_per_m3[i + 1] < 0:
+            ammonium_scaling_fix = sop_ammonium_gN_per_m3[i] / (sop_ammonium_gN_per_m3[i] - sop_ammonium_gN_per_m3[i + 1])
+            print("Ammonium underflow error! Applying scaling fix of", ammonium_scaling_fix)
+            sop_ammonium_gN_per_m3[i + 1] = 0.0
+        sop_nitrate_gN_per_m3[i + 1] = sop_nitrate_gN_per_m3[i] + (nitrification_gN_per_m3_per_day[i] * ammonium_scaling_fix - immobilization_from_nitrate_gN_per_m3_per_day[i] - nitrate_leaching_gN_per_m3_per_day[i] - plant_passive_uptake_of_nitrate_gN_per_m3_per_day[i] - plant_active_uptake_of_nitrate_gN_per_m3_per_day[i]) * output_dt_days
 
-    # if any(available_nitrogen_for_immobilization_gN_per_m3_per_day < 0) or any(maximum_immobilization_gN_per_m3_per_day < 0) or any(nitrification_assumptions_violation) or any(nitrification_gN_per_m3_per_day < 0) or any(mineralization_gN_per_m3_per_day < 0) or any(total_immobilization_gN_per_m3_per_day < 0) or any(plant_passive_uptake_of_ammonium_gN_per_m3_per_day < 0) or any(plant_active_uptake_of_ammonium_gN_per_m3_per_day < 0) or any(plant_passive_uptake_of_nitrate_gN_per_m3_per_day < 0) or any(plant_active_uptake_of_nitrate_gN_per_m3_per_day < 0) or any(ammonium_leaching_gN_per_m3_per_day < 0) or any(nitrate_leaching_gN_per_m3_per_day < 0) or any(ammonium_gN_per_m3 < 0) or any(ammonium_gN_per_m3 > 500) or any(nitrate_gN_per_m3 < 0) or any(nitrate_gN_per_m3 > 500):
+    # if any(available_nitrogen_for_immobilization_gN_per_m3_per_day < 0) or any(maximum_immobilization_gN_per_m3_per_day < 0) or any(immobilization_assumptions_violation) or any(nitrification_gN_per_m3_per_day < 0) or any(mineralization_gN_per_m3_per_day < 0) or any(total_immobilization_gN_per_m3_per_day < 0) or any(plant_passive_uptake_of_ammonium_gN_per_m3_per_day < 0) or any(plant_active_uptake_of_ammonium_gN_per_m3_per_day < 0) or any(plant_passive_uptake_of_nitrate_gN_per_m3_per_day < 0) or any(plant_active_uptake_of_nitrate_gN_per_m3_per_day < 0) or any(ammonium_leaching_gN_per_m3_per_day < 0) or any(nitrate_leaching_gN_per_m3_per_day < 0) or any(ammonium_gN_per_m3 < 0) or any(ammonium_gN_per_m3 > 500) or any(nitrate_gN_per_m3 < 0) or any(nitrate_gN_per_m3 > 500):
     #     print("Inorganic nitrogen sanity check failed!")
 
-    return ammonium_gN_per_m3, nitrate_gN_per_m3, ammonium_leaching_gN_per_m3_per_day, nitrate_leaching_gN_per_m3_per_day, plant_passive_uptake_of_ammonium_gN_per_m3_per_day, plant_passive_uptake_of_nitrate_gN_per_m3_per_day, plant_active_uptake_of_ammonium_gN_per_m3_per_day, plant_active_uptake_of_nitrate_gN_per_m3_per_day, nitrification_assumptions_violation, nitrification_gN_per_m3_per_day
+    # We return the start-of-period values for periods 1 to n+1, which is equivalent to end-of-period values for periods 0 to n.
+    return sop_ammonium_gN_per_m3[1:], sop_nitrate_gN_per_m3[1:], ammonium_leaching_gN_per_m3_per_day, nitrate_leaching_gN_per_m3_per_day, plant_passive_uptake_of_ammonium_gN_per_m3_per_day, plant_passive_uptake_of_nitrate_gN_per_m3_per_day, plant_active_uptake_of_ammonium_gN_per_m3_per_day, plant_active_uptake_of_nitrate_gN_per_m3_per_day, immobilization_assumptions_violation, nitrification_gN_per_m3_per_day
