@@ -12,8 +12,8 @@ from dp_solver import solve_dp, calculate_probabilities_of_violation, KernelMeta
 
 rng = np.random.default_rng(12345)
 
-CONTROL_TIMESTEP_DAYS = 3
-NUM_CONTROL_STEPS = 12
+CONTROL_TIMESTEP_DAYS = 6
+NUM_CONTROL_STEPS = 6
 # corn prices are measured in USD / 56 lbs at 15.5% moisture (by mass)
 CORN_PRICE_USD_PER_G_GRAIN = 4.80 / (1 - 0.155) / 25401.2
 N_PRICE_USD_PER_G = 0.0011
